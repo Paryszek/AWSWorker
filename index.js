@@ -5,7 +5,7 @@ const credentials = require("./credentials.json");
 
 const app = express()
 
-const port = 4500
+const port = 80;
 
 AWS.config.update({region: 'eu-central-1'});
 
