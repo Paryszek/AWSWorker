@@ -1,17 +1,18 @@
 const express = require('express')
 var AWS = require('aws-sdk')
 const multer = require('multer');
+const credentials = require("./credentials.json");
 
 const app = express()
 
-const port = 4000
+const port = 4500
 
 AWS.config.update({region: 'eu-central-1'});
 
-const BUCKET_NAME = 's3bucketforlabs';
-const USER_KEY = '';
-const USER_SECRET = '';
-const QUEUEURL = '';
+const BUCKET_NAME = credentials.BUCKET_NAME;
+const USER_KEY = credentials.USER_KEY;
+const USER_SECRET = credentials.USER_SECRET;
+const QUEUEURL = credentials.QUEUEURL;
 
 const s3Client = new AWS.S3({
     accessKeyId: USER_KEY,
@@ -25,27 +26,7 @@ const sqs = new AWS.SQS({
     secretAccessKey: USER_SECRET
 });
 
-var sqsSendMessageParams = {
-    DelaySeconds: 10,
-    MessageAttributes: {
-        "Title": {
-        DataType: "String",
-        StringValue: "Process"
-        },
-        "Author": {
-        DataType: "String",
-        StringValue: "AWS test"
-        },
-        "WeeksOn": {
-        DataType: "Number",
-        StringValue: "6"
-        }
-    },
-    MessageBody: "dupa",
-    QueueUrl: QUEUEURL
-};
-
-var paramsRec = {
+var receiveSQSParams = {
     AttributeNames: [
        "All"
     ],
@@ -53,16 +34,26 @@ var paramsRec = {
     MessageAttributeNames: [
        "All"
     ],
-    QueueUrl: "https://sqs.eu-central-1.amazonaws.com/393673436463/awsprocessqueue",
+    QueueUrl: QUEUEURL,
     VisibilityTimeout: 20,
     WaitTimeSeconds: 5
 };
 
-const uploadParams = {
+const uploadS3Params = {
     Bucket: BUCKET_NAME,
     Key: '',
     Body: null
 };
+
+const downloadS3Params = {
+    Bucket: BUCKET_NAME,
+    Key: ''
+}
+
+const deleteSQSMessageParams = {
+    QueueUrl: QUEUEURL, 
+    ReceiptHandle: ''
+}
 
 const listfilesParams = {
     Bucket: BUCKET_NAME,
@@ -70,31 +61,53 @@ const listfilesParams = {
 
 initSqsListeningOnQueue();
 
+function process(file) {
+    downloadS3Params.Key = file.Body;
+    s3Client.getObject(downloadS3Params, (err, data) => {
+        if (err) console.log(err, err.stack);
+        else {
+            console.log(data);
+            let copyOfFile = new Buffer(data.Body.toString());    
+            let key = "Copy_" + file.Body;
+            uploadObjectS3(copyOfFile, key, file.ReceiptHandle);
+        }
+    })
+}
+
 function initSqsListeningOnQueue() {
     setInterval(() => {
-        sqs.receiveMessage(paramsRec, function(err, data) {
+        sqs.receiveMessage(receiveSQSParams, function(err, data) {
             if (err) {
                 console.log("Receive Error", err);
             } else {
-                console.log(data);
+                console.log(data); 
+                if (data.Messages)
+                    data.Messages.forEach((file) => process(file))                                                     
             }
         });
      }, 30000)
 }
 
+function deleteMessageFromSQS(receiptHandle) {
+    deleteSQSMessageParams.ReceiptHandle = receiptHandle;
+    sqs.deleteMessage(deleteSQSMessageParams, function(err, data) {
+        if (err) console.log(err, err.stack); 
+        else     console.log(data);           
+    });
+}
+
 function listObjectsS3() {
-    s3Client.listObjects(listfilesParams, (err, data) => {
+    s3Client.listObjects(listfilesS3Params, (err, data) => {
         console.log(data);
     });
 }
-function uploadObjectS3(file) {
-    uploadParams.Key = file.originalname;
-    uploadParams.Body = file.buffer;
-    s3Client.upload(uploadParams, (err, data) => {        
+function uploadObjectS3(file, key, receiptHandle) {
+    uploadS3Params.Key = key;
+    uploadS3Params.Body = file;
+    s3Client.upload(uploadS3Params, (err, data) => {        
         if (err) console.log(err);
-    
-        res.json({message: 'File uploaded successfully','filename': 
-        req.file.originalname, 'location': data.Location});
+        console.log(data); 
+        deleteMessageFromSQS(receiptHandle)    
     })
 }
 
